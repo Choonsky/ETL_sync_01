@@ -1,111 +1,122 @@
 import oracledb
 import psycopg2
 import uuid
+import time
+from datetime import datetime
 
-from datetime import datetime, timezone
 
-try:
-    connectionOracle = oracledb.connect(
-        user="IN_DATA",
-        password="12345",
-        dsn="localhost:1521/FREEPDB1"  # Replace with your connection details
-    )
-    print("Successfully connected to Oracle!")
-    cursorOracle = connectionOracle.cursor()
-    connectionPostgres = psycopg2.connect(
-        dbname='postgres',
-        user='postgres',
-        password='admin',
-        host='localhost')
-    print("Successfully connected to PostgreSQL!")
-    cursorPostgres = connectionPostgres.cursor()
+def job():
+    try:
+        connectionOracle = oracledb.connect(
+            user="IN_DATA",
+            password="12345",
+            dsn="localhost:1521/FREEPDB1"  # Replace with your connection details
+        )
+        print("Successfully connected to Oracle!")
+        cursorOracle = connectionOracle.cursor()
+        connectionPostgres = psycopg2.connect(
+            dbname='postgres',
+            user='postgres',
+            password='admin',
+            host='localhost')
+        print("Successfully connected to PostgreSQL!")
+        cursorPostgres = connectionPostgres.cursor()
 
-    connectionPostgres.autocommit = True
+        connectionPostgres.autocommit = True
 
-# 1. Get last sync date and time
-    cursorPostgres.execute("SELECT date_sync FROM sync_log WHERE id = (select max(id) from sync_log)")
-    for row in cursorPostgres:
-        last_sync = row[0]
-    print(f"Last sync: {last_sync}")
+        # 1. Get last sync date and time
+        cursorPostgres.execute("SELECT date_sync FROM sync_log WHERE id = (select max(id) from sync_log)")
+        for row in cursorPostgres:
+            last_sync = row[0]
+        print(f"Last sync: {last_sync}")
 
-# 1a. Set current datetime as last sync date
-    dateNow = datetime.now()
-    cursorPostgres.execute("INSERT INTO sync_log (date_sync) VALUES (%s)", (dateNow,))
+        # 1a. Set current datetime as last sync date
+        dateNow = datetime.now()
+        cursorPostgres.execute("INSERT INTO sync_log (date_sync) VALUES (%s)", (dateNow,))
 
-# 2. Add all items that have date_created > last sync date
-    cursorOracle.prepare("SELECT * FROM in_data.data_main WHERE date_created > :ts")
-    cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
-    cursorOracle.execute(None, {'ts': last_sync})
-
-    for row in cursorOracle:
-        cursorPostgres.execute(f"""INSERT INTO result_data (id, id_indata, date_created, date_updated, user_created,
-                                                               user_updated, transaction_id, transaction_status_new,
-                                                               transaction_amount, transaction_currency,
-                                                               transaction_description, version)
-                                      VALUES ('{str(uuid.uuid4())}', '{row[0]}', '{row[1]}', '{row[2]}', '{row[3]}', '{row[4]}', 
-'{row[5]}', '{row[6]}', '{row[7]}', '{row[8]}', '{row[9]}', 1)""")
-
-# 3. Add all items that have date_created < last sync date, but date_updated > last sync date as increased version
-        cursorOracle.prepare("SELECT * FROM in_data.data_main WHERE date_created < :ts AND date_updated > :ts")
+        # 2. Add all items that have date_created > last sync date
+        cursorOracle.prepare("SELECT * FROM in_data.data_main WHERE date_created > :ts")
         cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
         cursorOracle.execute(None, {'ts': last_sync})
 
         for row in cursorOracle:
-            cursorPostgres.execute(f"SELECT max(version) FROM result_data WHERE id_indata = '{row[0]}'")
-            for row2 in cursorPostgres:
-                next_version = row2[0] + 1
             cursorPostgres.execute(f"""INSERT INTO result_data (id, id_indata, date_created, date_updated, user_created,
                                                                    user_updated, transaction_id, transaction_status_new,
                                                                    transaction_amount, transaction_currency,
                                                                    transaction_description, version)
                                           VALUES ('{str(uuid.uuid4())}', '{row[0]}', '{row[1]}', '{row[2]}', '{row[3]}', '{row[4]}', 
-    '{row[5]}', '{row[6]}', '{row[7]}', '{row[8]}', '{row[9]}', {next_version})""")
+    '{row[5]}', '{row[6]}', '{row[7]}', '{row[8]}', '{row[9]}', 1)""")
 
-# 4. Add deleted entries as date_updated = now, version++ and transaction_status_new = _DELETED_
-    cursorOracle.prepare("SELECT count(*) FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
-    cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
-    cursorOracle.execute(None, {'ts': last_sync})
+            # 3. Add all items that have date_created < last sync date, but date_updated > last sync date as increased version
+            cursorOracle.prepare("SELECT * FROM in_data.data_main WHERE date_created < :ts AND date_updated > :ts")
+            cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
+            cursorOracle.execute(None, {'ts': last_sync})
 
-    for row in cursorOracle:
-        countOldRows = row[0]
+            for row in cursorOracle:
+                cursorPostgres.execute(f"SELECT max(version) FROM result_data WHERE id_indata = '{row[0]}'")
+                for row2 in cursorPostgres:
+                    next_version = row2[0] + 1
+                cursorPostgres.execute(f"""INSERT INTO result_data (id, id_indata, date_created, date_updated, user_created,
+                                                                       user_updated, transaction_id, transaction_status_new,
+                                                                       transaction_amount, transaction_currency,
+                                                                       transaction_description, version)
+                                              VALUES ('{str(uuid.uuid4())}', '{row[0]}', '{row[1]}', '{row[2]}', '{row[3]}', '{row[4]}', 
+        '{row[5]}', '{row[6]}', '{row[7]}', '{row[8]}', '{row[9]}', {next_version})""")
 
-    cursorPostgres.execute("SELECT count(distinct(id_indata)) FROM result_data WHERE date_created < %s AND date_updated < %s", (last_sync, last_sync))
-    for row in cursorPostgres:
-        countOldRows2 = row[0]
-
-    if countOldRows != countOldRows2:
-        cursorPostgres.execute("SELECT distinct(id_indata) FROM result_data WHERE date_created < %s AND date_updated < %s", (last_sync, last_sync))
-        idsSaved = cursorPostgres.fetchall()
-
-        cursorOracle.prepare("SELECT id FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
+        # 4. Add deleted entries as date_updated = now, version++ and transaction_status_new = _DELETED_
+        cursorOracle.prepare("SELECT count(*) FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
         cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
         cursorOracle.execute(None, {'ts': last_sync})
 
         for row in cursorOracle:
-            idsActual = cursorOracle.fetchall()
+            countOldRows = row[0]
 
-        for id in idsSaved:
-            if id not in idsActual:
-                cursorPostgres.execute(f"SELECT max(version) FROM result_data WHERE id_indata = '{id}'")
-                for row in cursorPostgres:
-                    next_version = row[0] + 1
-                cursorPostgres.execute(f"""INSERT INTO result_data (id, id_indata, date_created, date_updated, user_created,
-                                                                               user_updated, transaction_id, transaction_status_new,
-                                                                               transaction_amount, transaction_currency,
-                                                                               transaction_description, version)
-                                                      VALUES ('{str(uuid.uuid4())}', '{row[0]}', '{row[1]}', '{row[2]}', '{row[3]}', '{row[4]}', 
-                '{row[5]}', '_DELETED_', '{row[7]}', '{row[8]}', '{row[9]}', {next_version})""")
+        cursorPostgres.execute(
+            "SELECT count(distinct(id_indata)) FROM result_data WHERE date_created < %s AND date_updated < %s",
+            (last_sync, last_sync))
+        for row in cursorPostgres:
+            countOldRows2 = row[0]
 
-# TODO: count new|changed|deleted entries and write this info to the sync_log.result field
+        if countOldRows != countOldRows2:
+            cursorPostgres.execute(
+                "SELECT distinct(id_indata) FROM result_data WHERE date_created < %s AND date_updated < %s",
+                (last_sync, last_sync))
+            idsSaved = cursorPostgres.fetchall()
 
-    cursorOracle.close()
-    connectionOracle.close()
-    cursorPostgres.close()
-    connectionPostgres.close()
+            cursorOracle.prepare("SELECT id FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
+            cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
+            cursorOracle.execute(None, {'ts': last_sync})
 
-except oracledb.Error as error:
-    print(f"Oracle Error: {error}")
-except psycopg2.Error as error:
-    print(f"Postgres Error: {error}")
-except Exception as error:
-    print(f"An error occurred: {error}")
+            for row in cursorOracle:
+                idsActual = cursorOracle.fetchall()
+
+            for id in idsSaved:
+                if id not in idsActual:
+                    cursorPostgres.execute(f"SELECT max(version) FROM result_data WHERE id_indata = '{id}'")
+                    for row in cursorPostgres:
+                        next_version = row[0] + 1
+                    cursorPostgres.execute(f"""INSERT INTO result_data (id, id_indata, date_created, date_updated, user_created,
+                                                                                   user_updated, transaction_id, transaction_status_new,
+                                                                                   transaction_amount, transaction_currency,
+                                                                                   transaction_description, version)
+                                                          VALUES ('{str(uuid.uuid4())}', '{row[0]}', '{row[1]}', '{row[2]}', '{row[3]}', '{row[4]}', 
+                    '{row[5]}', '_DELETED_', '{row[7]}', '{row[8]}', '{row[9]}', {next_version})""")
+
+        cursorOracle.close()
+        connectionOracle.close()
+        cursorPostgres.close()
+        connectionPostgres.close()
+
+    except oracledb.Error as error:
+        print(f"Oracle Error: {error}")
+    except psycopg2.Error as error:
+        print(f"Postgres Error: {error}")
+    except Exception as error:
+        print(f"An error occurred: {error}")
+
+
+# Should put this to the Crontab
+
+while True:
+    job()
+    time.sleep(300)
