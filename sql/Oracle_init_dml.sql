@@ -1,18 +1,36 @@
-CREATE TABLE in_data.data_main
+-- Takes 7-8 minutes to add 1 million rows
 
-(
-    -- UUID as in v19 Oracle. For the last version we can use 'id STRING AS UUID'
-    id           CHAR(36) CHECK (REGEXP_LIKE(id, '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$')) primary key,
-
-    date_created DATE not null,
-    date_updated DATE,
-
-    user_created CHAR(36) not null,
-    user_updated CHAR(36),
-
-    transaction_id CHAR(36) not null,
-    transaction_status_new VARCHAR2(8) not null,
-    transaction_amount NUMBER not null,
-    transaction_currency VARCHAR2(3) not null,
-    transaction_description NVARCHAR2(200) not null
-);
+DECLARE
+    v_data     in_data.data_main%ROWTYPE;
+    v_rowcount NUMBER := 1000000; -- Number of rows to insert
+BEGIN
+    FOR i IN 1..v_rowcount
+        LOOP
+            select LOWER(REGEXP_REPLACE(RAWTOHEX(SYS_GUID()),
+                                        '([A-F0-9]{8})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{12})',
+                                        '\1-\2-\3-\4-\5'))
+            INTO v_data.ID;
+            select LOWER(REGEXP_REPLACE(RAWTOHEX(SYS_GUID()),
+                                        '([A-F0-9]{8})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{12})',
+                                        '\1-\2-\3-\4-\5'))
+            INTO v_data.USER_CREATED;
+            select LOWER(REGEXP_REPLACE(RAWTOHEX(SYS_GUID()),
+                                        '([A-F0-9]{8})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{12})',
+                                        '\1-\2-\3-\4-\5'))
+            INTO v_data.USER_UPDATED;
+            select LOWER(REGEXP_REPLACE(RAWTOHEX(SYS_GUID()),
+                                        '([A-F0-9]{8})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{4})([A-F0-9]{12})',
+                                        '\1-\2-\3-\4-\5'))
+            INTO v_data.TRANSACTION_ID;
+            select round(DBMS_RANDOM.VALUE(1, 1000000), 2)
+            INTO v_data.TRANSACTION_AMOUNT;
+            select DBMS_RANDOM.string('a', round(DBMS_RANDOM.VALUE(10, 100)))
+            INTO v_data.TRANSACTION_DESCRIPTION;
+            -- Process data here
+            insert into in_data.data_main
+            values (v_data.id, sysdate, sysdate, v_data.USER_CREATED,
+                    v_data.USER_UPDATED, v_data.TRANSACTION_ID, 'CREATED', v_data.TRANSACTION_AMOUNT,
+                    'KGS', v_data.TRANSACTION_DESCRIPTION);
+        END LOOP;
+    commit;
+END;
