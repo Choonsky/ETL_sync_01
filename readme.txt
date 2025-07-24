@@ -17,3 +17,4 @@ Test ETL for tables synchronization (Oracle -> Postgres) using SCD2 scheme
 # TODO: count new|changed|deleted entries and write this info to the sync_log.result field
 # TODO: check timezones
 # TODO: get DB credentials from the vault
+# TODO: move the job starting each 5 min to the Cron
