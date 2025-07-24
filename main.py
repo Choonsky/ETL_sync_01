@@ -29,7 +29,8 @@ try:
     print(f"Last sync: {last_sync}")
 
 # 1a. Set current datetime as last sync date
-    cursorPostgres.execute("INSERT INTO sync_log (date_sync) VALUES ('{datetime.now()}')")
+    dateNow = datetime.now()
+    cursorPostgres.execute("INSERT INTO sync_log (date_sync) VALUES (%s)", (dateNow,))
 
 # 2. Add all items that have date_created > last sync date
     cursorOracle.prepare("SELECT * FROM in_data.data_main WHERE date_created > :ts")
@@ -68,12 +69,12 @@ try:
     for row in cursorOracle:
         countOldRows = row[0]
 
-    cursorPostgres.execute("SELECT count(distinct(id_indata)) FROM result_data WHERE date_created < '{last_sync}' AND date_updated < '{last_sync}'")
+    cursorPostgres.execute("SELECT count(distinct(id_indata)) FROM result_data WHERE date_created < %s AND date_updated < %s", (last_sync, last_sync))
     for row in cursorPostgres:
         countOldRows2 = row[0]
 
     if countOldRows != countOldRows2:
-        cursorPostgres.execute("SELECT distinct(id_indata) FROM result_data WHERE date_created < '{last_sync}' AND date_updated < '{last_sync}'")
+        cursorPostgres.execute("SELECT distinct(id_indata) FROM result_data WHERE date_created < %s AND date_updated < %s", (last_sync, last_sync))
         idsSaved = cursorPostgres.fetchall()
 
         cursorOracle.prepare("SELECT id FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
