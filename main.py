@@ -61,9 +61,41 @@ try:
     '{row[5]}', '{row[6]}', '{row[7]}', '{row[8]}', '{row[9]}', {next_version})""")
 
 # 4. Add deleted entries as date_updated = now, version++ and transaction_status_new = _DELETED_
-# TODO
+    cursorOracle.prepare("SELECT count(*) FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
+    cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
+    cursorOracle.execute(None, {'ts': last_sync})
 
-# 5. Add new entry to the
+    for row in cursorOracle:
+        countOldRows = row[0]
+
+    cursorPostgres.execute("SELECT count(distinct(id_indata)) FROM result_data WHERE date_created < '{last_sync}' AND date_updated < '{last_sync}'")
+    for row in cursorPostgres:
+        countOldRows2 = row[0]
+
+    if countOldRows != countOldRows2:
+        cursorPostgres.execute("SELECT distinct(id_indata) FROM result_data WHERE date_created < '{last_sync}' AND date_updated < '{last_sync}'")
+        idsSaved = cursorPostgres.fetchall()
+
+        cursorOracle.prepare("SELECT id FROM in_data.data_main WHERE date_created < :ts AND date_updated < :ts")
+        cursorOracle.setinputsizes(ts=oracledb.TIMESTAMP)
+        cursorOracle.execute(None, {'ts': last_sync})
+
+        for row in cursorOracle:
+            idsActual = cursorOracle.fetchall()
+
+        for id in idsSaved:
+            if id not in idsActual:
+                cursorPostgres.execute(f"SELECT max(version) FROM result_data WHERE id_indata = '{id}'")
+                for row in cursorPostgres:
+                    next_version = row[0] + 1
+                cursorPostgres.execute(f"""INSERT INTO result_data (id, id_indata, date_created, date_updated, user_created,
+                                                                               user_updated, transaction_id, transaction_status_new,
+                                                                               transaction_amount, transaction_currency,
+                                                                               transaction_description, version)
+                                                      VALUES ('{str(uuid.uuid4())}', '{row[0]}', '{row[1]}', '{row[2]}', '{row[3]}', '{row[4]}', 
+                '{row[5]}', '_DELETED_', '{row[7]}', '{row[8]}', '{row[9]}', {next_version})""")
+
+# TODO: count new|changed|deleted entries and write this info to the sync_log.result field
 
     cursorOracle.close()
     connectionOracle.close()
